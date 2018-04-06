@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.UUID;
-import java.util.Arrays;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -31,15 +30,12 @@ public class BluetoothSerialService {
     private static final boolean D = true;
 
     // Name for the SDP record when creating server socket
-    private static final String NAME_SECURE = "PhoneGapBluetoothSerialServiceSecure";
-    private static final String NAME_INSECURE = "PhoneGapBluetoothSerialServiceInSecure";
+    private static final String NAME_SECURE = "SecureServer";
+    private static final String NAME_INSECURE = "InSecureServer";
 
     // Unique UUID for this application
     private static final UUID MY_UUID_SECURE = UUID.fromString("7A9C3B55-78D0-44A7-A94E-A93E3FE118CE");
     private static final UUID MY_UUID_INSECURE = UUID.fromString("23F18142-B389-4772-93BD-52BDBB2C03E9");
-
-    // Well known SPP UUID
-    private static final UUID UUID_SPP = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
     // Member fields
     private final BluetoothAdapter mAdapter;
@@ -96,20 +92,17 @@ public class BluetoothSerialService {
         // Cancel any thread currently running a connection
         if (mConnectedThread != null) {mConnectedThread.cancel(); mConnectedThread = null;}
 
-        setState(STATE_NONE);
+        setState(STATE_LISTEN);
 
-//      Listen isn't working with Arduino. Ignore since assuming the phone will initiate the connection.
-//        setState(STATE_LISTEN);
-//
-//        // Start the thread to listen on a BluetoothServerSocket
-//        if (mSecureAcceptThread == null) {
-//            mSecureAcceptThread = new AcceptThread(true);
-//            mSecureAcceptThread.start();
-//        }
-//        if (mInsecureAcceptThread == null) {
-//            mInsecureAcceptThread = new AcceptThread(false);
-//            mInsecureAcceptThread.start();
-//        }
+        // Start the thread to listen on a BluetoothServerSocket
+        if (mSecureAcceptThread == null) {
+            mSecureAcceptThread = new AcceptThread(true);
+            mSecureAcceptThread.start();
+        }
+        //if (mInsecureAcceptThread == null) {
+        //    mInsecureAcceptThread = new AcceptThread(false);
+        //    mInsecureAcceptThread.start();
+        //}
     }
 
     /**
@@ -118,7 +111,6 @@ public class BluetoothSerialService {
      * @param secure Socket Security type - Secure (true) , Insecure (false)
      */
     public synchronized void connect(BluetoothDevice device, boolean secure) {
-        if (D) Log.d(TAG, "connect to: " + device);
 
         // Cancel any thread attempting to make a connection
         if (mState == STATE_CONNECTING) {
@@ -133,6 +125,9 @@ public class BluetoothSerialService {
         mConnectThread.start();
         setState(STATE_CONNECTING);
     }
+
+
+
 
     /**
      * Start the ConnectedThread to begin managing a Bluetooth connection
@@ -275,10 +270,11 @@ public class BluetoothSerialService {
         }
 
         public void run() {
-            if (D) Log.d(TAG, "Socket Type: " + mSocketType + "BEGIN mAcceptThread" + this);
+            if (D) Log.d(TAG, "Socket Type: " + mSocketType + 
+				    "BEGIN mAcceptThread" + this);
             setName("AcceptThread" + mSocketType);
 
-            BluetoothSocket socket;
+            BluetoothSocket socket = null;
 
             // Listen to the server socket if we're not connected
             while (mState != STATE_CONNECTED) {
@@ -295,21 +291,21 @@ public class BluetoothSerialService {
                 if (socket != null) {
                     synchronized (BluetoothSerialService.this) {
                         switch (mState) {
-                            case STATE_LISTEN:
-                            case STATE_CONNECTING:
-                                // Situation normal. Start the connected thread.
-                                connected(socket, socket.getRemoteDevice(),
-                                        mSocketType);
-                                break;
-                            case STATE_NONE:
-                            case STATE_CONNECTED:
-                                // Either not ready or already connected. Terminate new socket.
-                                try {
-                                    socket.close();
-                                } catch (IOException e) {
-                                    Log.e(TAG, "Could not close unwanted socket", e);
-                                }
-                                break;
+						case STATE_LISTEN:
+						case STATE_CONNECTING:
+							// Situation normal. Start the connected thread.
+							connected(socket, socket.getRemoteDevice(),
+									mSocketType);
+							break;
+						case STATE_NONE:
+						case STATE_CONNECTED:
+							// Either not ready or already connected. Terminate new socket.
+							try {
+								socket.close();
+							} catch (IOException e) {
+								Log.e(TAG, "Could not close unwanted socket", e);
+							}
+							break;
                         }
                     }
                 }
@@ -335,7 +331,7 @@ public class BluetoothSerialService {
      * succeeds or fails.
      */
     private class ConnectThread extends Thread {
-        private /*final*/ BluetoothSocket mmSocket;
+        private final BluetoothSocket mmSocket;
         private final BluetoothDevice mmDevice;
         private String mSocketType;
 
@@ -347,11 +343,9 @@ public class BluetoothSerialService {
             // Get a BluetoothSocket for a connection with the given BluetoothDevice
             try {
                 if (secure) {
-                    // tmp = device.createRfcommSocketToServiceRecord(MY_UUID_SECURE);
-                    tmp = device.createRfcommSocketToServiceRecord(UUID_SPP);
+                    tmp = device.createRfcommSocketToServiceRecord(MY_UUID_SECURE);
                 } else {
-                    //tmp = device.createInsecureRfcommSocketToServiceRecord(MY_UUID_INSECURE);
-                    tmp = device.createInsecureRfcommSocketToServiceRecord(UUID_SPP);
+                    tmp = device.createInsecureRfcommSocketToServiceRecord(MY_UUID_INSECURE);
                 }
             } catch (IOException e) {
                 Log.e(TAG, "Socket Type: " + mSocketType + "create() failed", e);
@@ -369,29 +363,18 @@ public class BluetoothSerialService {
             // Make a connection to the BluetoothSocket
             try {
                 // This is a blocking call and will only return on a successful connection or an exception
-                Log.i(TAG,"Connecting to socket...");
                 mmSocket.connect();
-                Log.i(TAG,"Connected");
             } catch (IOException e) {
                 Log.e(TAG, e.toString());
-
-                // Some 4.1 devices have problems, try an alternative way to connect
-                // See https://github.com/don/BluetoothSerial/issues/89
+                e.printStackTrace();
+                // Close the socket
                 try {
-                    Log.i(TAG,"Trying fallback...");
-                    mmSocket = (BluetoothSocket) mmDevice.getClass().getMethod("createRfcommSocket", new Class[] {int.class}).invoke(mmDevice,1);
-                    mmSocket.connect();
-                    Log.i(TAG,"Connected");
-                } catch (Exception e2) {
-                    Log.e(TAG, "Couldn't establish a Bluetooth connection.");
-                    try {
-                        mmSocket.close();
-                    } catch (IOException e3) {
-                        Log.e(TAG, "unable to close() " + mSocketType + " socket during connection failure", e3);
-                    }
-                    connectionFailed();
-                    return;
+                    mmSocket.close();
+                } catch (IOException e2) {
+                    Log.e(TAG, "unable to close() " + mSocketType + " socket during connection failure", e2);
                 }
+                connectionFailed();
+                return;
             }
 
             // Reset the ConnectThread because we're done
@@ -449,18 +432,9 @@ public class BluetoothSerialService {
                 try {
                     // Read from the InputStream
                     bytes = mmInStream.read(buffer);
-                    String data = new String(buffer, 0, bytes);
 
-                    // Send the new data String to the UI Activity
-                    mHandler.obtainMessage(BluetoothSerial.MESSAGE_READ, data).sendToTarget();
-
-                    // Send the raw bytestream to the UI Activity.
-                    // We make a copy because the full array can have extra data at the end
-                    // when / if we read less than its size.
-                    if (bytes > 0) {
-                        byte[] rawdata = Arrays.copyOf(buffer, bytes);
-                        mHandler.obtainMessage(BluetoothSerial.MESSAGE_READ_RAW, rawdata).sendToTarget();
-                    }
+                    // Send the obtained bytes to the UI Activity
+                    mHandler.obtainMessage(BluetoothSerial.MESSAGE_READ, bytes, -1, buffer).sendToTarget();
 
                 } catch (IOException e) {
                     Log.e(TAG, "disconnected", e);
